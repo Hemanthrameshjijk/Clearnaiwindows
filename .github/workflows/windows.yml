@@ -41,3 +41,10 @@ jobs:
 
       - name: Build release binary (matches the real packaging target)
         run: cargo build --release --workspace --locked
+
+      - name: Upload clearnairt.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: clearnairt-windows-x64
+          path: target/release/clearnairt.exe
+          if-no-files-found: error
