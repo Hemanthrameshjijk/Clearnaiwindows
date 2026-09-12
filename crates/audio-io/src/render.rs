@@ -69,7 +69,7 @@ impl HardwareRender {
             .spawn(move || {
                 let mut consumer = consumer;
                 if let Err(e) = render_loop(&device_id, &mut consumer, &thread_stop) {
-                    eprintln!("[audio-io] hardware render thread exited with error: {e:#}");
+                    crate::report_error(&format!("[audio-io] hardware render thread exited with error: {e:#}"));
                 }
             })
             .context("spawning hardware render thread")?;
@@ -182,10 +182,10 @@ fn render_loop(
             pending.resize(start + FRAME_SAMPLES, 0.0);
             let got = pull_frame(consumer, &mut pending[start..]);
             if got < FRAME_SAMPLES {
-                eprintln!(
+                crate::report_error(&format!(
                     "[audio-io] render ring buffer underrun, padding {} samples of silence",
                     FRAME_SAMPLES - got
-                );
+                ));
             }
         }
 

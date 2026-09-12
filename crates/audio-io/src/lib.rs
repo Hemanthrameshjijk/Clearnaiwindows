@@ -17,6 +17,41 @@ pub mod devices;
 pub mod loopback;
 pub mod render;
 
+use std::sync::OnceLock;
+
+/// Where this crate's fatal/warning-level messages go. Every worker thread
+/// here (`capture`/`render`/`loopback`) previously used a bare `eprintln!`
+/// for these, which is silently discarded in this app: `main.rs` builds with
+/// `#![windows_subsystem = "windows"]`, so the process has no console and
+/// stderr goes nowhere. That made every real failure mode this crate can hit
+/// (a WASAPI device disappearing, an event wait timing out, a write to a
+/// dead device) invisible - the worker thread would simply exit, the
+/// pipeline thread on the other end of its ring buffer would spin forever
+/// logging "buffer full, dropping frame" (a real, misleadingly-generic
+/// symptom this exact gap caused), and nobody could tell why.
+///
+/// `set_error_sink` lets the app crate redirect these into its own
+/// file-backed logger (`app::logging::log_error!`) instead - see
+/// `main()`. Falls back to `eprintln!` (harmless on Linux dev builds/tests,
+/// where there's a real console) if never set.
+static ERROR_SINK: OnceLock<Box<dyn Fn(&str) + Send + Sync>> = OnceLock::new();
+
+/// Registers where this crate's error/warning messages should go. Must be
+/// called (if at all) before any capture/render/loopback thread starts -
+/// safe to call at most once; later calls are silently ignored (matching
+/// `OnceLock` semantics), which is fine since this app only ever calls it
+/// once, at startup.
+pub fn set_error_sink(sink: impl Fn(&str) + Send + Sync + 'static) {
+    let _ = ERROR_SINK.set(Box::new(sink));
+}
+
+pub(crate) fn report_error(msg: &str) {
+    match ERROR_SINK.get() {
+        Some(sink) => sink(msg),
+        None => eprintln!("{msg}"),
+    }
+}
+
 /// Initializes COM (STA, not MTA) on the *calling* thread. Every
 /// `capture.rs`/`render.rs`/`loopback.rs` worker thread already calls
 /// `wasapi::initialize_mta()` internally before touching WASAPI — that part
@@ -63,7 +98,7 @@ pub mod render;
 pub fn initialize_com_for_this_thread() {
     let hr = wasapi::initialize_sta();
     if hr.is_err() {
-        eprintln!("[audio-io] WARNING: CoInitializeEx(STA) on this thread returned {hr:?}");
+        report_error(&format!("[audio-io] WARNING: CoInitializeEx(STA) on this thread returned {hr:?}"));
     }
 }
 
@@ -145,7 +180,7 @@ pub(crate) fn warn_if_buffer_size_mismatched(audio_client: &wasapi::AudioClient,
             let cleanly_adaptable = actual != 0
                 && (actual == expected || actual % expected == 0 || expected % actual == 0);
             if !cleanly_adaptable {
-                eprintln!(
+                report_error(&format!(
                     "[audio-io] WARNING: {stream_label} negotiated a WASAPI buffer of {actual} \
                      frames, which is not {expected} (10ms @ {}Hz) nor a clean multiple/divisor \
                      of it. Requested {REQUESTED_BUFFER_DURATION_HNS} hns explicitly, but the \
@@ -153,15 +188,15 @@ pub(crate) fn warn_if_buffer_size_mismatched(audio_client: &wasapi::AudioClient,
                      hardware - the reference Linux/PipeWire port hit exactly this kind of \
                      silent mismatch). Frame-based chunking downstream may behave unexpectedly.",
                     dsp_core::SAMPLE_RATE_HZ
-                );
+                ));
             }
         }
         Err(e) => {
-            eprintln!(
+            report_error(&format!(
                 "[audio-io] WARNING: could not query negotiated WASAPI buffer size for \
                  {stream_label} to verify it matches the requested 10ms/{} frames: {e:#}",
                 dsp_core::FRAME_SAMPLES
-            );
+            ));
         }
     }
 }

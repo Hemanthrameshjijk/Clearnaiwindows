@@ -192,23 +192,12 @@ fn update_main(state: &mut MainState, message: Message) {
         Message::ToggleMicNoise(on) => {
             state.handles.mic_noise.set(on);
             state.settings.mic_noise_on = on;
-            // RNNoise and BVC are mutually exclusive on the mic path (see
-            // `EngineHandles::new_from_settings`) - turning one on turns the
-            // other off, so they never both double-process the same frame.
-            if on {
-                state.handles.mic_bvc.set(false);
-                state.settings.mic_bvc_on = false;
-            }
             persist(&state.settings);
         }
         Message::ToggleMicBvc(on) => {
             if state.handles.bvc_available {
                 state.handles.mic_bvc.set(on);
                 state.settings.mic_bvc_on = on;
-                if on {
-                    state.handles.mic_noise.set(false);
-                    state.settings.mic_noise_on = false;
-                }
                 persist(&state.settings);
             }
         }
@@ -233,22 +222,12 @@ fn update_main(state: &mut MainState, message: Message) {
         Message::ToggleSpeakerNoise(on) => {
             state.handles.speaker_noise.set(on);
             state.settings.speaker_noise_on = on;
-            // Mutually exclusive with speaker-path BVC, same reasoning as
-            // the mic path above.
-            if on {
-                state.handles.speaker_bvc.set(false);
-                state.settings.speaker_bvc_on = false;
-            }
             persist(&state.settings);
         }
         Message::ToggleSpeakerBvc(on) => {
             if state.handles.bvc_available {
                 state.handles.speaker_bvc.set(on);
                 state.settings.speaker_bvc_on = on;
-                if on {
-                    state.handles.speaker_noise.set(false);
-                    state.settings.speaker_noise_on = false;
-                }
                 persist(&state.settings);
             }
         }

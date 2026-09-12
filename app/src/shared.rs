@@ -231,27 +231,14 @@ impl EngineHandles {
         bvc_unavailable_reason: Option<String>,
         warnings: Vec<String>,
     ) -> Self {
-        // RNNoise and BVC are two independent ML denoisers; running both at
-        // once on the same path double-processes the signal (each adds its
-        // own buffering latency - BVC's native frame length isn't
-        // guaranteed to match the host's 480 samples, see
-        // `bvc_hush::FrameAdapter` - and stacking denoisers tends to smear/
-        // re-trigger noise artifacts). They are mutually exclusive by
-        // construction: if a persisted settings file somehow has both on
-        // (e.g. from before this rule existed), RNNoise wins and BVC is
-        // forced off here, mirroring the live-toggle behavior in
-        // `gui::update`.
-        let mic_bvc_on = settings.mic_bvc_on && bvc_available && !settings.mic_noise_on;
-        let speaker_bvc_on = settings.speaker_bvc_on && bvc_available && !settings.speaker_noise_on;
-
         Self {
             mic_noise: StageToggle::new(settings.mic_noise_on),
-            mic_bvc: StageToggle::new(mic_bvc_on),
+            mic_bvc: StageToggle::new(settings.mic_bvc_on && bvc_available),
             mic_studio: StageToggle::new(settings.mic_studio_on),
             mic_studio_preset: SharedPreset::new(settings.mic_studio_preset),
             aec: StageToggle::new(settings.aec_on),
             speaker_noise: StageToggle::new(settings.speaker_noise_on),
-            speaker_bvc: StageToggle::new(speaker_bvc_on),
+            speaker_bvc: StageToggle::new(settings.speaker_bvc_on && bvc_available),
             speaker_studio: StageToggle::new(settings.speaker_studio_on),
             speaker_studio_preset: SharedPreset::new(settings.speaker_studio_preset),
             speaker_tap: StageToggle::new(settings.speaker_tap_on),
@@ -341,26 +328,6 @@ mod tests {
         let handles = EngineHandles::new_from_settings(&settings, true, None, Vec::new());
         assert!(handles.bvc_available);
         assert!(!handles.mic_bvc.is_on());
-    }
-
-    #[test]
-    fn mic_noise_and_bvc_are_mutually_exclusive_on_construction() {
-        let mut settings = crate::settings::Settings::default();
-        settings.mic_noise_on = true;
-        settings.mic_bvc_on = true; // both saved on from before this rule existed
-        let handles = EngineHandles::new_from_settings(&settings, true, None, Vec::new());
-        assert!(handles.mic_noise.is_on(), "RNNoise wins when both were saved on");
-        assert!(!handles.mic_bvc.is_on(), "BVC must be forced off to avoid double-processing");
-    }
-
-    #[test]
-    fn speaker_noise_and_bvc_are_mutually_exclusive_on_construction() {
-        let mut settings = crate::settings::Settings::default();
-        settings.speaker_noise_on = true;
-        settings.speaker_bvc_on = true;
-        let handles = EngineHandles::new_from_settings(&settings, true, None, Vec::new());
-        assert!(handles.speaker_noise.is_on());
-        assert!(!handles.speaker_bvc.is_on());
     }
 
     #[test]

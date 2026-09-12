@@ -78,7 +78,7 @@ impl MicCapture {
             .spawn(move || {
                 let mut producer = producer;
                 if let Err(e) = capture_loop(&device_id, &mut producer, &thread_stop) {
-                    eprintln!("[audio-io] mic capture thread exited with error: {e:#}");
+                    crate::report_error(&format!("[audio-io] mic capture thread exited with error: {e:#}"));
                 }
             })
             .context("spawning mic capture thread")?;
@@ -209,7 +209,7 @@ fn push_frame(producer: &mut Producer<f32>, frame: &[f32]) {
         if producer.push(sample).is_err() {
             // Ring buffer full: drop the remainder of this frame rather
             // than blocking. Downstream will simply see a short gap.
-            eprintln!("[audio-io] mic capture ring buffer full, dropping frame");
+            crate::report_error("[audio-io] mic capture ring buffer full, dropping frame");
             return;
         }
     }

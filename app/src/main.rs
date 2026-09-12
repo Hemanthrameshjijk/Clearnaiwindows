@@ -153,6 +153,16 @@ fn main() -> iced::Result {
 
     logging::init(&setup::app_data_dir());
 
+    // `audio-io`'s capture/render/loopback worker threads used to report
+    // their own fatal errors (a WASAPI device disappearing, an event wait
+    // timing out, a write to a dead device) via a bare `eprintln!`, which
+    // this `#![windows_subsystem = "windows"]` binary has no console to
+    // ever show - the thread would silently die while its ring-buffer
+    // partner kept logging generic "buffer full, dropping frame" errors
+    // forever with no visible root cause. Redirect them into the same
+    // file-backed logger everything else in this crate uses.
+    audio_io::set_error_sink(|msg| crate::log_error!("{msg}"));
+
     let settings = settings::load();
     let initial = bootstrap(&settings);
     gui::run(initial)

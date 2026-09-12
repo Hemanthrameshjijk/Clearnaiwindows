@@ -78,7 +78,7 @@ impl LoopbackTap {
             .spawn(move || {
                 let mut producer = producer;
                 if let Err(e) = loopback_loop(&device_id, &mut producer, &thread_stop) {
-                    eprintln!("[audio-io] loopback tap thread exited with error: {e:#}");
+                    crate::report_error(&format!("[audio-io] loopback tap thread exited with error: {e:#}"));
                 }
             })
             .context("spawning loopback tap thread")?;
@@ -188,7 +188,7 @@ fn loopback_loop(
                 if pending.len() == FRAME_SAMPLES {
                     for &s in &pending {
                         if producer.push(s).is_err() {
-                            eprintln!("[audio-io] loopback ring buffer full, dropping frame");
+                            crate::report_error("[audio-io] loopback ring buffer full, dropping frame");
                             break;
                         }
                     }
