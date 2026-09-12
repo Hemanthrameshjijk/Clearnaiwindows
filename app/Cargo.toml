@@ -1,0 +1,56 @@
+[package]
+name = "clearnai-app"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "clearnairt"
+path = "src/main.rs"
+
+[dependencies]
+# Portable foundation crate (bypass toggles, ring buffers, metrics). Builds
+# and its unit tests run on every platform.
+dsp-core = { path = "../crates/dsp-core" }
+
+# DSP stages. All of these are portable Rust (no OS calls) except bvc-hush,
+# which dynamically loads a Windows DLL at runtime via `libloading` - the
+# crate itself still *builds* on Linux (the DLL load just fails at runtime
+# with a clean `HushLoadError`, which is exactly the "unavailable" path this
+# app is required to handle honestly rather than crash on).
+studio-dsp = { path = "../crates/studio-dsp" }
+noise-engine = { path = "../crates/noise-engine" }
+bvc-hush = { path = "../crates/bvc-hush" }
+aec = { path = "../crates/aec" }
+
+# Real Windows audio I/O (WASAPI). Most of this crate's actual logic is
+# gated `#![cfg(windows)]` file-by-file; this app only calls into it from
+# code that is itself `#[cfg(windows)]`-gated (see src/engine.rs).
+audio-io = { path = "../crates/audio-io" }
+
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# GUI. Current major version confirmed against docs.rs/crates.io on
+# 2026-09-11 (see docs/VIRTUAL_DEVICES.md / the report for citations): 0.14.0,
+# using the `iced::application(boot, update, view)` builder API (the older
+# `Application` trait/`Sandbox` API from pre-0.13 iced no longer exists).
+# The `tokio` feature is required for `iced::time::every`, which drives the
+# ~250ms status/level-meter poll.
+iced = { version = "0.14", features = ["tokio"] }
+
+# NOTE: the earlier `ureq` dependency for a first-run BVC model download has
+# been removed - both `weya_nc.dll` and the ONNX model bundle are now
+# embedded directly into this binary via `include_bytes!` (see
+# `app/assets/` and `setup.rs::ensure_bvc_assets_extracted`) and
+# self-extracted into `%LOCALAPPDATA%\ClearNAI` at launch, with no network
+# access involved at all.
+
+[target.'cfg(windows)'.dependencies]
+# Only needed for `setup.rs`'s real Windows compatibility checks:
+# `RtlGetVersion` (via the `Wdk_System_SystemServices` feature) and a direct
+# `wasapi::initialize_mta()` COM-init probe, matching the exact `windows`/
+# `wasapi` versions already pulled in transitively by `audio-io` (see
+# `crates/audio-io/Cargo.toml`) to avoid duplicate incompatible versions.
+windows = { version = "0.62", features = ["Wdk_System_SystemServices", "Wdk_Foundation", "Win32_System_SystemInformation"] }
+wasapi = "0.24"

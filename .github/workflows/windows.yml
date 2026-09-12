@@ -1,0 +1,43 @@
+name: Windows build and test
+
+# Runs the workspace's real build (x86_64-pc-windows-msvc, the project's
+# actual target - see STATUS.md) and full test suite on GitHub's real
+# Windows runners. This project has so far only been cross-checked from a
+# Linux sandbox with no Windows box available; this workflow is the first
+# time the MSVC build itself is actually attempted.
+#
+# What this DOES verify: the crate graph and all its dependencies (windows
+# COM/WASAPI bindings, tract-linalg's hand-compiled SIMD, etc.) actually
+# compile and link under cl.exe/link.exe, and every unit test that doesn't
+# need real hardware (dsp-core, studio-dsp, noise-engine, aec, settings,
+# setup) passes on genuine Windows.
+#
+# What this CANNOT verify (needs a real machine - see docs/VIRTUAL_DEVICES.md
+# and STATUS.md): real WASAPI devices/mic/speakers, a real weya_nc.dll +
+# model bundle on disk, a real VB-Cable install, or the GUI actually
+# rendering/responding to input.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build workspace (release off, debug is enough to prove it links)
+        run: cargo build --workspace --locked
+
+      - name: Run full test suite
+        run: cargo test --workspace --locked -- --nocapture
+
+      - name: Build release binary (matches the real packaging target)
+        run: cargo build --release --workspace --locked

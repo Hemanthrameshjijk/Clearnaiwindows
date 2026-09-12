@@ -1,0 +1,17 @@
+[package]
+name = "audio-io"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+dsp-core = { path = "../dsp-core" }
+anyhow = "1"
+
+# wasapi (and the WAV writer only used by the loopback test-mode dump) are
+# real OS-audio bindings and only build/link on Windows. Keeping them out of
+# the default dependency set means `cargo check`/`cargo test` still work for
+# the OS-independent logic in this crate (e.g. devices::name_contains_*) when
+# run natively on a non-Windows dev machine.
+[target.'cfg(windows)'.dependencies]
+wasapi = "0.24"
+hound = "3.5"

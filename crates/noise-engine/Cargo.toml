@@ -1,0 +1,21 @@
+[package]
+name = "noise-engine"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+dsp-core = { path = "../dsp-core" }
+anyhow = "1"
+nnnoiseless = { version = "0.5", default-features = false }
+ndarray = "0.15"
+
+# `deep_filter` (crate name of the DeepFilterNet project's `libDF`, lib target
+# name `df`) has not published a crates.io release with the `tract` feature /
+# `DfTract` streaming API since 0.2.5 (2022) — that published version predates
+# `tract.rs` entirely. The real streaming API only exists on the git repo from
+# v0.3.0 onward, so this must be a git dependency pinned to a tag, not a
+# crates.io version. Pinned to v0.5.6 (tag verified against the upstream repo).
+deep_filter = { package = "deep_filter", git = "https://github.com/Rikorose/DeepFilterNet", tag = "v0.5.6", default-features = false, features = ["tract"] }
+
+[dev-dependencies]
+rand = "0.8"
