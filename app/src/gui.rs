@@ -111,6 +111,10 @@ pub enum Message {
     SelectPhysicalMic(DeviceOption),
     ToggleMonitor(bool),
     SelectMonitorDevice(DeviceOption),
+    /// Re-enumerates devices (e.g. after starting VoiceMeter/VB-Cable
+    /// *after* ClearNAI) without restarting the app. See
+    /// `LiveDeviceSwitcher::enumerate_devices`.
+    RefreshDevices,
     /// Setup screen: "Continue" / "Continue anyway" clicked.
     ContinueFromSetup,
 }
@@ -306,6 +310,13 @@ fn update_main(state: &mut MainState, message: Message) {
                 s.set_monitor_device(Some(device.id))
             });
         }
+        Message::RefreshDevices => {
+            // Enumeration itself (unlike a device switch) never opens a
+            // device or joins a worker thread, so it's cheap and safe to run
+            // inline on the UI thread rather than needing
+            // `spawn_device_switch`'s background-thread treatment.
+            state.devices = state.handles.device_switcher.enumerate_devices();
+        }
         // Setup-screen-only messages; unreachable once `Screen::Main` is
         // active (its `view` never emits them), same reasoning as the
         // catch-all in `update_setup`.
@@ -437,8 +448,16 @@ fn view_main(state: &MainState) -> Element<'_, Message> {
     ]
     .spacing(10);
 
-    let devices = column![
+    let devices_heading = row![
         text("Virtual devices (see docs/VIRTUAL_DEVICES.md - two separate cable instances required)").size(13),
+        button(text("Refresh devices").size(12)).on_press(Message::RefreshDevices),
+    ]
+    .spacing(12)
+    .align_y(iced::Alignment::Center);
+
+    let devices = column![
+        devices_heading,
+        text("Started VoiceMeter/VB-Cable after ClearNAI? Click Refresh, then (re)select it below - devices are only scanned once at launch.").size(12),
         device_picker(
             "Virtual mic target (render into this device)",
             &state.devices.render,

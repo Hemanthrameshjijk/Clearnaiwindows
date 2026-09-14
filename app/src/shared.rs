@@ -116,6 +116,17 @@ pub trait LiveDeviceSwitcher: Send + Sync {
     fn set_virtual_mic_target(&self, device_id: Option<String>);
     fn set_virtual_speaker_source(&self, device_id: Option<String>);
     fn set_monitor_device(&self, device_id: Option<String>);
+
+    /// Re-enumerates render/capture devices right now. Real hardware
+    /// finding: devices are only enumerated once, at process startup
+    /// (`main.rs`), so a virtual-cable app (e.g. VoiceMeter/VB-Cable)
+    /// started *after* ClearNAI never appears in the device pickers and its
+    /// role silently processes nothing (looks exactly like "NC/BVC isn't
+    /// working") until the whole app is restarted. A GUI "Refresh devices"
+    /// button calls this to pick up newly-available devices without a
+    /// restart - selecting one still goes through the ordinary
+    /// `set_*`/`Settings` live-switch path above.
+    fn enumerate_devices(&self) -> DeviceList;
 }
 
 /// The non-Windows (and startup-failure) stand-in: every call is a no-op.
@@ -128,6 +139,10 @@ impl LiveDeviceSwitcher for NoOpDeviceSwitcher {
     fn set_virtual_mic_target(&self, _device_id: Option<String>) {}
     fn set_virtual_speaker_source(&self, _device_id: Option<String>) {}
     fn set_monitor_device(&self, _device_id: Option<String>) {}
+
+    fn enumerate_devices(&self) -> DeviceList {
+        DeviceList::empty()
+    }
 }
 
 /// Live handles shared between the audio engine thread(s) and the GUI.

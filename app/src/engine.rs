@@ -244,6 +244,10 @@ impl LiveDeviceSwitcher for LiveAudioSwitcher {
             }
         }
     }
+
+    fn enumerate_devices(&self) -> DeviceList {
+        enumerate_devices()
+    }
 }
 
 /// Result of starting the engine: the shared toggle/metrics handles for the
