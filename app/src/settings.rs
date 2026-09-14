@@ -36,8 +36,9 @@ pub struct Settings {
     /// side.
     #[serde(default = "default_true")]
     pub speaker_noise_on: bool,
-    /// "BVC (outbound, after Noise)" - default ON (subject to the same
-    /// `bvc_available` force-off as `mic_bvc_on`).
+    /// "BVC (outbound, after Noise)" - default ON (subject to its own
+    /// independent `speaker_bvc_available` force-off, separate from
+    /// `mic_bvc_on`'s `mic_bvc_available`).
     #[serde(default = "default_true")]
     pub speaker_bvc_on: bool,
     /// "Studio (outbound)" - default ON.

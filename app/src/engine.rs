@@ -318,7 +318,8 @@ pub fn default_virtual_speaker_source(list: &DeviceList) -> Option<String> {
 }
 
 /// Starts the full engine: loads BVC (or falls back to a real no-op stage,
-/// honestly reflected in `EngineHandles::bvc_available`), constructs every
+/// honestly reflected in `EngineHandles::mic_bvc_available`/
+/// `speaker_bvc_available`), constructs every
 /// DSP stage up front (regardless of initial toggle state), wires the three
 /// required pipelines, and starts their WASAPI threads.
 ///
@@ -350,7 +351,7 @@ pub fn start(
     // fallback if loading fails a second time (e.g. DLL present but a
     // transient session-creation failure) is a plain no-op, not a crash.
     let mic_bvc_load = bvc_hush::HushBvcStage::try_load(bvc_assets_dir);
-    let (bvc_available, bvc_unavailable_reason) = match &mic_bvc_load {
+    let (mic_bvc_available, mic_bvc_unavailable_reason) = match &mic_bvc_load {
         Ok(_) => (true, None),
         Err(e) => (false, Some(e.to_string())),
     };
@@ -358,7 +359,12 @@ pub fn start(
         Ok(stage) => Box::new(stage),
         Err(_) => Box::new(NoOpStage("BVC (unavailable)")),
     };
-    let speaker_bvc_stage: Box<dyn Stage> = match bvc_hush::HushBvcStage::try_load(bvc_assets_dir) {
+    let speaker_bvc_load = bvc_hush::HushBvcStage::try_load(bvc_assets_dir);
+    let (speaker_bvc_available, speaker_bvc_unavailable_reason) = match &speaker_bvc_load {
+        Ok(_) => (true, None),
+        Err(e) => (false, Some(e.to_string())),
+    };
+    let speaker_bvc_stage: Box<dyn Stage> = match speaker_bvc_load {
         Ok(stage) => Box::new(stage),
         Err(e) => {
             warnings.push(format!(
@@ -402,7 +408,14 @@ pub fn start(
     // `AecEngine` trait. ---
     let aec_engine: Box<dyn AecEngine> = Box::new(NlmsAec::new_default());
 
-    let mut handles = EngineHandles::new_from_settings(settings, bvc_available, bvc_unavailable_reason, Vec::new());
+    let mut handles = EngineHandles::new_from_settings(
+        settings,
+        mic_bvc_available,
+        mic_bvc_unavailable_reason,
+        speaker_bvc_available,
+        speaker_bvc_unavailable_reason,
+        Vec::new(),
+    );
 
     // --- Ring buffers. 2 seconds of headroom at 48kHz is generous relative
     // to the 10ms frame size; sized once here, never resized (a live device

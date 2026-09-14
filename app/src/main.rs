@@ -94,6 +94,8 @@ fn bootstrap(settings: &settings::Settings) -> gui::Initial {
                 settings,
                 false,
                 Some("engine failed to start; see stderr log".to_string()),
+                false,
+                Some("engine failed to start; see stderr log".to_string()),
                 vec![format!("Audio engine failed to start: {e:#}")],
             );
             gui::Initial {
@@ -119,6 +121,8 @@ fn bootstrap(settings: &settings::Settings) -> gui::Initial {
     let bvc_extraction_error = setup::ensure_bvc_assets_extracted(&bvc_dir).err().map(|e| format!("{e:#}"));
     let handles = shared::EngineHandles::new_from_settings(
         settings,
+        false,
+        Some("not running on Windows".to_string()),
         false,
         Some("not running on Windows".to_string()),
         Vec::new(),

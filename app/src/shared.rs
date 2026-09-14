@@ -139,7 +139,7 @@ impl LiveDeviceSwitcher for NoOpDeviceSwitcher {
 pub struct EngineHandles {
     /// Mic-path RNNoise, "RNNoise (between Mic and Virtual Mic)".
     pub mic_noise: StageToggle,
-    /// Mic-path BVC, "BVC (after Noise)". See `bvc_available`.
+    /// Mic-path BVC, "BVC (after Noise)". See `mic_bvc_available`.
     pub mic_bvc: StageToggle,
     /// Mic-path Studio stage, "Studio".
     pub mic_studio: StageToggle,
@@ -155,8 +155,9 @@ pub struct EngineHandles {
     /// the mic side's per-stage toggles.
     pub speaker_noise: StageToggle,
     /// Speaker outbound path, "BVC (outbound, after Noise)". See
-    /// `bvc_available` - forced off the same way `mic_bvc` is when BVC could
-    /// not be loaded (the flag is a DLL/model property, not per-pipeline).
+    /// `speaker_bvc_available` - its own independent flag, forced off only
+    /// when the speaker path's own BVC load failed (not tied to the mic
+    /// path's `mic_bvc_available`).
     pub speaker_bvc: StageToggle,
     /// Speaker outbound path, "Studio (outbound)".
     pub speaker_studio: StageToggle,
@@ -187,15 +188,23 @@ pub struct EngineHandles {
     /// matching every other `StageToggle` in this struct).
     pub monitor: StageToggle,
 
-    /// Whether `bvc_hush::HushBvcStage::try_load` succeeded at startup. When
-    /// `false`, `mic_bvc` has been forced to `false` and the GUI must render
-    /// its toggle disabled (never silently ignoring a user's attempt to turn
-    /// it on).
-    pub bvc_available: bool,
-    /// Human-readable reason BVC is unavailable (e.g. "weya_nc.dll not
-    /// found next to ... "), for a tooltip/label next to the disabled
-    /// toggle. `None` when `bvc_available` is `true`.
-    pub bvc_unavailable_reason: Option<String>,
+    /// Whether the mic-path `bvc_hush::HushBvcStage::try_load` succeeded at
+    /// startup. When `false`, `mic_bvc` has been forced to `false` and the
+    /// GUI must render its toggle disabled (never silently ignoring a
+    /// user's attempt to turn it on). Independent of `speaker_bvc_available`
+    /// - each path loads its own DLL session and can fail independently.
+    pub mic_bvc_available: bool,
+    /// Human-readable reason mic-path BVC is unavailable (e.g. "weya_nc.dll
+    /// not found next to ..."), for a tooltip/label next to the disabled
+    /// toggle. `None` when `mic_bvc_available` is `true`.
+    pub mic_bvc_unavailable_reason: Option<String>,
+    /// Whether the speaker-path `bvc_hush::HushBvcStage::try_load` succeeded
+    /// at startup. See `mic_bvc_available` - this is its own independent
+    /// flag, not shared with the mic path.
+    pub speaker_bvc_available: bool,
+    /// Human-readable reason speaker-path BVC is unavailable. `None` when
+    /// `speaker_bvc_available` is `true`.
+    pub speaker_bvc_unavailable_reason: Option<String>,
 
     /// Non-fatal startup warnings (e.g. "no virtual speaker source device
     /// selected; speaker outbound pipeline not started") surfaced once in
@@ -223,28 +232,34 @@ pub struct EngineHandles {
 
 impl EngineHandles {
     /// Builds the toggle set from persisted `Settings`, honestly reflecting
-    /// BVC availability (`bvc_available` forces `mic_bvc` off if BVC could
-    /// not be loaded, regardless of the persisted preference).
+    /// BVC availability per path (`mic_bvc_available`/`speaker_bvc_available`
+    /// each force their own toggle off if that path's BVC could not be
+    /// loaded, regardless of the persisted preference - the two paths load
+    /// independent DLL sessions and can succeed/fail independently).
     pub fn new_from_settings(
         settings: &crate::settings::Settings,
-        bvc_available: bool,
-        bvc_unavailable_reason: Option<String>,
+        mic_bvc_available: bool,
+        mic_bvc_unavailable_reason: Option<String>,
+        speaker_bvc_available: bool,
+        speaker_bvc_unavailable_reason: Option<String>,
         warnings: Vec<String>,
     ) -> Self {
         Self {
             mic_noise: StageToggle::new(settings.mic_noise_on),
-            mic_bvc: StageToggle::new(settings.mic_bvc_on && bvc_available),
+            mic_bvc: StageToggle::new(settings.mic_bvc_on && mic_bvc_available),
             mic_studio: StageToggle::new(settings.mic_studio_on),
             mic_studio_preset: SharedPreset::new(settings.mic_studio_preset),
             aec: StageToggle::new(settings.aec_on),
             speaker_noise: StageToggle::new(settings.speaker_noise_on),
-            speaker_bvc: StageToggle::new(settings.speaker_bvc_on && bvc_available),
+            speaker_bvc: StageToggle::new(settings.speaker_bvc_on && speaker_bvc_available),
             speaker_studio: StageToggle::new(settings.speaker_studio_on),
             speaker_studio_preset: SharedPreset::new(settings.speaker_studio_preset),
             speaker_tap: StageToggle::new(settings.speaker_tap_on),
             monitor: StageToggle::new(settings.monitor_enabled),
-            bvc_available,
-            bvc_unavailable_reason,
+            mic_bvc_available,
+            mic_bvc_unavailable_reason,
+            speaker_bvc_available,
+            speaker_bvc_unavailable_reason,
             warnings: Arc::new(warnings),
             latency_log: Arc::new(LatencyLog::new(1024)),
             counters: Arc::new(FrameCounters::default()),
@@ -311,23 +326,49 @@ mod tests {
     fn bvc_unavailable_forces_toggle_off_regardless_of_saved_preference() {
         let mut settings = crate::settings::Settings::default();
         settings.mic_bvc_on = true; // user's saved preference is "on"
+        settings.speaker_bvc_on = true;
         let handles = EngineHandles::new_from_settings(
             &settings,
             false,
             Some("weya_nc.dll not found".into()),
+            false,
+            Some("weya_nc.dll not found".into()),
             Vec::new(),
         );
-        assert!(!handles.bvc_available);
+        assert!(!handles.mic_bvc_available);
+        assert!(!handles.speaker_bvc_available);
         assert!(!handles.mic_bvc.is_on(), "BVC must be forced off when unavailable, never silently left on");
+        assert!(!handles.speaker_bvc.is_on(), "BVC must be forced off when unavailable, never silently left on");
     }
 
     #[test]
     fn bvc_available_honors_saved_preference() {
         let mut settings = crate::settings::Settings::default();
         settings.mic_bvc_on = false;
-        let handles = EngineHandles::new_from_settings(&settings, true, None, Vec::new());
-        assert!(handles.bvc_available);
+        let handles = EngineHandles::new_from_settings(&settings, true, None, true, None, Vec::new());
+        assert!(handles.mic_bvc_available);
+        assert!(handles.speaker_bvc_available);
         assert!(!handles.mic_bvc.is_on());
+    }
+
+    #[test]
+    fn mic_and_speaker_bvc_availability_are_independent() {
+        // The two paths load independent DLL sessions and can succeed/fail
+        // independently - one path's failure must never force the other's
+        // toggle off.
+        let mut settings = crate::settings::Settings::default();
+        settings.mic_bvc_on = true;
+        settings.speaker_bvc_on = true;
+        let handles = EngineHandles::new_from_settings(
+            &settings,
+            true,
+            None,
+            false,
+            Some("session limit reached".into()),
+            Vec::new(),
+        );
+        assert!(handles.mic_bvc.is_on(), "mic BVC must stay on when only the speaker path failed to load");
+        assert!(!handles.speaker_bvc.is_on(), "speaker BVC must be forced off when its own load failed");
     }
 
     #[test]
@@ -361,7 +402,7 @@ mod tests {
         // (never overwritten) - it must default to a real, inert
         // implementation, never a dangling/unset handle.
         let settings = crate::settings::Settings::default();
-        let handles = EngineHandles::new_from_settings(&settings, true, None, Vec::new());
+        let handles = EngineHandles::new_from_settings(&settings, true, None, true, None, Vec::new());
         // Must not panic - proves a concrete, callable `LiveDeviceSwitcher`
         // is always present from construction.
         handles.device_switcher.set_physical_mic(None);

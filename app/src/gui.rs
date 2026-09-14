@@ -195,7 +195,7 @@ fn update_main(state: &mut MainState, message: Message) {
             persist(&state.settings);
         }
         Message::ToggleMicBvc(on) => {
-            if state.handles.bvc_available {
+            if state.handles.mic_bvc_available {
                 state.handles.mic_bvc.set(on);
                 state.settings.mic_bvc_on = on;
                 persist(&state.settings);
@@ -225,7 +225,7 @@ fn update_main(state: &mut MainState, message: Message) {
             persist(&state.settings);
         }
         Message::ToggleSpeakerBvc(on) => {
-            if state.handles.bvc_available {
+            if state.handles.speaker_bvc_available {
                 state.handles.speaker_bvc.set(on);
                 state.settings.speaker_bvc_on = on;
                 persist(&state.settings);
@@ -318,27 +318,27 @@ fn device_picker<'a>(
 }
 
 fn view_main(state: &MainState) -> Element<'_, Message> {
-    let mic_bvc_label = if state.handles.bvc_available {
+    let mic_bvc_label = if state.handles.mic_bvc_available {
         "BVC (after Noise)".to_string()
     } else {
         format!(
             "BVC (after Noise) - unavailable: {}",
             state
                 .handles
-                .bvc_unavailable_reason
+                .mic_bvc_unavailable_reason
                 .as_deref()
                 .unwrap_or("weya_nc.dll not found")
         )
     };
 
-    let speaker_bvc_label = if state.handles.bvc_available {
+    let speaker_bvc_label = if state.handles.speaker_bvc_available {
         "BVC (outbound, after Noise)".to_string()
     } else {
         format!(
             "BVC (outbound, after Noise) - unavailable: {}",
             state
                 .handles
-                .bvc_unavailable_reason
+                .speaker_bvc_unavailable_reason
                 .as_deref()
                 .unwrap_or("weya_nc.dll not found")
         )
@@ -386,7 +386,7 @@ fn view_main(state: &MainState) -> Element<'_, Message> {
             .on_toggle(Message::ToggleMicNoise),
         toggler(state.handles.mic_bvc.is_on())
             .label(mic_bvc_label)
-            .on_toggle_maybe(state.handles.bvc_available.then_some(Message::ToggleMicBvc as fn(bool) -> Message)),
+            .on_toggle_maybe(state.handles.mic_bvc_available.then_some(Message::ToggleMicBvc as fn(bool) -> Message)),
         toggler(state.handles.mic_studio.is_on())
             .label("Studio")
             .on_toggle(Message::ToggleMicStudio),
@@ -399,7 +399,7 @@ fn view_main(state: &MainState) -> Element<'_, Message> {
             .on_toggle(Message::ToggleSpeakerNoise),
         toggler(state.handles.speaker_bvc.is_on())
             .label(speaker_bvc_label)
-            .on_toggle_maybe(state.handles.bvc_available.then_some(Message::ToggleSpeakerBvc as fn(bool) -> Message)),
+            .on_toggle_maybe(state.handles.speaker_bvc_available.then_some(Message::ToggleSpeakerBvc as fn(bool) -> Message)),
         toggler(state.handles.speaker_studio.is_on())
             .label("Studio (outbound)")
             .on_toggle(Message::ToggleSpeakerStudio),
