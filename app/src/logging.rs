@@ -13,14 +13,44 @@
 //! crate for a single-binary app with no library consumers of the log
 //! output.
 
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 static LOG_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
-static LOCK: Mutex<()> = Mutex::new(());
+
+/// Real-hardware finding: some of this app's realtime audio threads (mic
+/// capture, hardware render) call `log_error!` on *every* dropped/underrun
+/// frame - if a stall starts, that's once every ~10ms, forever, with no
+/// automatic recovery. Two things about the old implementation made that
+/// genuinely dangerous rather than just noisy:
+///
+/// 1. It reopened the log file from scratch (`OpenOptions::open`) on every
+///    single call instead of keeping a handle open. Disk I/O for a fresh
+///    open+append+close, repeated every ~10ms on a realtime audio thread,
+///    can itself take longer than the 10ms frame budget once the file has
+///    grown large (observed: 180+ MB from a single run) - which causes
+///    *more* drops, which logs more, in a genuine runaway feedback loop.
+///    This was a real, measured contributor to audible glitching, not a
+///    theoretical concern.
+/// 2. It had no de-duplication, so an unbroken run of identical messages
+///    ("output ring buffer full, dropping frame", frame after frame) wrote
+///    one line each, unbounded.
+///
+/// `LoggerState` now keeps the file open for the process lifetime and
+/// collapses runs of the exact same message into "seen N times in the last
+/// second", both fixing the runaway I/O and keeping the file readable.
+struct LoggerState {
+    file: Option<File>,
+    last_msg: String,
+    suppressed: u64,
+    last_flush: Instant,
+}
+
+static STATE: OnceLock<Mutex<LoggerState>> = OnceLock::new();
 
 /// Must be called once, as the very first thing in `main()`, before any
 /// other code in this crate might log. `dir` is `setup::app_data_dir()`.
@@ -35,15 +65,56 @@ fn timestamp() -> String {
     format!("{}.{:03}", now.as_secs(), now.subsec_millis())
 }
 
-/// Appends one line to the log file. Silently does nothing if `init` was
-/// never called or the file can't be opened/written - logging must never be
-/// a source of a real crash.
+fn state() -> &'static Mutex<LoggerState> {
+    STATE.get_or_init(|| {
+        let file = LOG_PATH
+            .get()
+            .and_then(|p| p.as_ref())
+            .and_then(|path| OpenOptions::new().create(true).append(true).open(path).ok());
+        Mutex::new(LoggerState {
+            file,
+            last_msg: String::new(),
+            suppressed: 0,
+            // Far enough in the past that the very first message is never
+            // itself treated as a suppressed repeat.
+            last_flush: Instant::now() - Duration::from_secs(3600),
+        })
+    })
+}
+
+/// Appends one line to the log file, unless `init` was never called (then
+/// this is a no-op). An unbroken run of the exact same message is collapsed
+/// to at most one line per second (see `LoggerState` docs) - logging must
+/// never itself become a source of realtime-audio-thread stalls.
 pub fn write_line(level: &str, msg: &str) {
-    let Some(Some(path)) = LOG_PATH.get() else {
+    if LOG_PATH.get().and_then(|p| p.as_ref()).is_none() {
         return;
-    };
-    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
+    }
+    let mut guard = state().lock().unwrap_or_else(|e| e.into_inner());
+
+    if msg == guard.last_msg && guard.last_flush.elapsed() < Duration::from_secs(1) {
+        guard.suppressed += 1;
+        return;
+    }
+
+    // A genuinely new message (or the same one, but a second+ has passed):
+    // first flush a summary for whatever was being suppressed, describing
+    // *that* message, not this new one.
+    if guard.suppressed > 0 {
+        let suppressed = guard.suppressed;
+        if let Some(f) = guard.file.as_mut() {
+            let _ = writeln!(
+                f,
+                "[{}] [{level}] (previous message repeated {suppressed} more time(s) in the last second)",
+                timestamp()
+            );
+        }
+        guard.suppressed = 0;
+    }
+
+    guard.last_msg = msg.to_string();
+    guard.last_flush = Instant::now();
+    if let Some(f) = guard.file.as_mut() {
         let _ = writeln!(f, "[{}] [{level}] {msg}", timestamp());
     }
 }
