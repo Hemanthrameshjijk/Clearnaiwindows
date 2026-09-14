@@ -303,6 +303,7 @@ dependencies = [
  "dsp-core",
  "hound",
  "wasapi",
+ "windows 0.62.2",
 ]
 
 [[package]]

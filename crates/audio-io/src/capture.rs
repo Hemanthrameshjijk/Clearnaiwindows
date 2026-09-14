@@ -80,6 +80,11 @@ impl MicCapture {
             .name("audio-io-mic-capture".into())
             .spawn(move || {
                 let mut producer = producer;
+                // Best-effort: see `mmcss.rs` - failure is silent and
+                // harmless (thread just stays at normal priority). Held for
+                // the whole thread's lifetime, across reconnects, not
+                // re-acquired per `capture_loop` call below.
+                let _mmcss_guard = crate::mmcss::elevate_current_thread();
                 // See render.rs's identical reconnect loop: a WASAPI failure
                 // here (device disabled/removed, sleep/wake) used to
                 // permanently kill mic capture until the app was restarted.

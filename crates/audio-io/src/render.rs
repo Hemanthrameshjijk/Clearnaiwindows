@@ -71,6 +71,11 @@ impl HardwareRender {
             .name("audio-io-hw-render".into())
             .spawn(move || {
                 let mut consumer = consumer;
+                // Best-effort: see `mmcss.rs` - failure is silent and
+                // harmless (thread just stays at normal priority). Held for
+                // the whole thread's lifetime, across reconnects, not
+                // re-acquired per `render_loop` call below.
+                let _mmcss_guard = crate::mmcss::elevate_current_thread();
                 // Real hardware finding: a WASAPI failure here (device
                 // disabled/removed, sleep/wake, another app grabbing
                 // exclusive mode) is very often transient, but this loop

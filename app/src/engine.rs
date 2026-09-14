@@ -718,6 +718,11 @@ fn spawn_mic_pipeline(
     thread::Builder::new()
         .name("clearnai-mic-pipeline".into())
         .spawn(move || {
+            // Best-effort: see `audio_io::mmcss` - this thread runs the
+            // AEC/Noise/BVC/Studio chain every 10ms and is exactly the kind
+            // of realtime work MMCSS's "Pro Audio" category exists for.
+            // Failure is silent and harmless (stays at normal priority).
+            let _mmcss_guard = audio_io::mmcss::elevate_current_thread();
             let mut frame = vec![0.0f32; FRAME_SAMPLES];
             let mut reference = vec![0.0f32; FRAME_SAMPLES];
             let silence = vec![0.0f32; FRAME_SAMPLES];
@@ -817,6 +822,9 @@ fn spawn_speaker_pipeline(
     thread::Builder::new()
         .name("clearnai-speaker-pipeline".into())
         .spawn(move || {
+            // Best-effort: see `audio_io::mmcss` / the mic pipeline's
+            // identical elevation above.
+            let _mmcss_guard = audio_io::mmcss::elevate_current_thread();
             let mut frame = vec![0.0f32; FRAME_SAMPLES];
             let mut last_studio_preset = handles.speaker_studio_preset.load();
             loop {

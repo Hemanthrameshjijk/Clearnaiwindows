@@ -80,6 +80,11 @@ impl LoopbackTap {
             .name("audio-io-loopback-tap".into())
             .spawn(move || {
                 let mut producer = producer;
+                // Best-effort: see `mmcss.rs` - failure is silent and
+                // harmless (thread just stays at normal priority). Held for
+                // the whole thread's lifetime, across reconnects, not
+                // re-acquired per `loopback_loop` call below.
+                let _mmcss_guard = crate::mmcss::elevate_current_thread();
                 // See render.rs's identical reconnect loop: a WASAPI failure
                 // here (render device disabled/removed, sleep/wake) used to
                 // permanently kill the loopback tap until the app was

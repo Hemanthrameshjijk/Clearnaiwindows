@@ -15,3 +15,7 @@ anyhow = "1"
 [target.'cfg(windows)'.dependencies]
 wasapi = "0.24"
 hound = "3.5"
+# For MMCSS "Pro Audio" thread elevation (`AvSetMmThreadCharacteristicsW`/
+# `AvRevertMmThreadCharacteristics`) - see `mmcss.rs`. Same major version as
+# `app/Cargo.toml`'s `windows` dependency to avoid pulling in two copies.
+windows = { version = "0.62", features = ["Win32_System_Threading"] }
