@@ -26,35 +26,46 @@ is a different C compiler than GCC/mingw and has not been exercised here).
 **Run the MSVC build yourself and report back if it fails** — do not assume
 success carries over from the GNU result.
 
-## 2. Gather the folder
+## 2. Build the installer (recommended) or use the portable exe
 
-`clearnairt.exe` is now fully self-contained for BVC purposes: `weya_nc.dll`
+`clearnairt.exe` is fully self-contained for BVC purposes: `weya_nc.dll`
 and the ONNX model bundle (`advanced_dfnet16k_model_best_onnx.tar.gz`) are
 embedded directly into the binary at build time via `include_bytes!` (see
 `app/assets/` and `app/src/setup.rs::ensure_bvc_assets_extracted`) and are
 self-extracted into `%LOCALAPPDATA%\ClearNAI` the first time the app runs
 (and re-extracted automatically if either ever goes missing or comes back a
 different size — e.g. after an app update that bundles a newer version).
-There is nothing left to copy alongside the exe for BVC to work — no more
-manually placing a `.dll` or a model archive next to it:
+There is nothing to copy alongside the exe for BVC to work.
+
+### Option A: real installer (`ClearNAI-Setup.exe`)
+
+`app/installer.nsi` is an [NSIS](https://nsis.sourceforge.io/) script that
+builds a proper per-user installer — Start Menu + Desktop shortcuts, a real
+entry in Windows' "Apps & Features" with a working Uninstall button (backed
+by an NSIS-auto-generated `Uninstall.exe`), no admin/UAC prompt required. It
+installs into `%LOCALAPPDATA%\ClearNAI` — the same directory the app already
+self-extracts its BVC assets into — so uninstalling is just removing that
+one directory (see the script's own comments for exactly what it does and
+deliberately does *not* touch, i.e. any VB-Cable/VoiceMeeter driver install).
+
+```powershell
+choco install nsis -y   # if not already present
+cd app
+makensis installer.nsi
+```
+
+This produces `target\release\ClearNAI-Setup.exe`. This is also exactly
+what `.github/workflows/windows.yml` does in CI — see its `ClearNAI-Setup`
+artifact for a build already produced on a real Windows runner.
+
+### Option B: portable exe, no installer
+
+For a no-install, single-file distribution, just copy the exe on its own:
 
 ```powershell
 $dist = "dist\ClearNAI"
 New-Item -ItemType Directory -Force -Path $dist
 Copy-Item target\x86_64-pc-windows-msvc\release\clearnairt.exe $dist\
-Copy-Item app\uninstall.ps1 $dist\
-
-# uninstall.ps1 removes %LOCALAPPDATA%\ClearNAI (settings.json, clearnai.log,
-# and the self-extracted weya_nc.dll/model bundle) and optionally deletes
-# clearnairt.exe itself. It does NOT touch any VB-Cable/VoiceMeeter driver
-# install - see the script's own header comment for why.
-
-# That's it for BVC — weya_nc.dll and the model bundle are embedded inside
-# clearnairt.exe itself and self-extract into %LOCALAPPDATA%\ClearNAI on
-# first run. If extraction ever fails (disk full, unwritable
-# %LOCALAPPDATA%, etc.), the app still starts and shows BVC as
-# unavailable with a clear error on the setup screen, exactly like the old
-# "DLL not found" case.
 
 # rustc/cargo will have already statically linked everything else this
 # project depends on (nnnoiseless, deep_filter/tract, wasapi, iced/wgpu) —
@@ -63,6 +74,10 @@ Copy-Item app\uninstall.ps1 $dist\
 # non-system DLL it reports that isn't already in $dist. This has not been
 # done here since no MSVC-built exe exists yet to inspect.
 ```
+
+There is no dedicated uninstaller for this option (there's nothing to
+uninstall beyond deleting the exe and, if you want, `%LOCALAPPDATA%\ClearNAI`
+by hand) — use Option A if you want a real uninstall entry.
 
 ## 3. Driver / virtual-device install step (separate from the app folder)
 

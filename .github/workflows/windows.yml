@@ -42,11 +42,27 @@ jobs:
       - name: Build release binary (matches the real packaging target)
         run: cargo build --release --workspace --locked
 
-      - name: Upload clearnairt.exe + uninstall.ps1
+      # Pinned explicitly rather than relying on whatever happens to be
+      # preinstalled on the runner image - NSIS presence/version on GitHub's
+      # windows-latest image has changed across image releases, so this
+      # step must never silently depend on that.
+      - name: Install NSIS
+        run: choco install nsis -y --no-progress
+
+      - name: Build ClearNAI-Setup.exe installer
+        working-directory: app
+        run: makensis installer.nsi
+
+      - name: Upload raw clearnairt.exe (portable, no install needed)
         uses: actions/upload-artifact@v4
         with:
-          name: clearnairt-windows-x64
-          path: |
-            target/release/clearnairt.exe
-            app/uninstall.ps1
+          name: clearnairt-windows-x64-portable
+          path: target/release/clearnairt.exe
+          if-no-files-found: error
+
+      - name: Upload ClearNAI-Setup.exe installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClearNAI-Setup
+          path: target/release/ClearNAI-Setup.exe
           if-no-files-found: error
