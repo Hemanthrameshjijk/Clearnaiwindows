@@ -24,7 +24,10 @@ use wasapi::{initialize_mta, DeviceEnumerator, Direction, StreamMode};
 
 use crate::bytes::pop_f32_le;
 use crate::devices::{find_capture_device_by_name, open_capture_device_by_id};
-use crate::{engine_wave_format, warn_if_buffer_size_mismatched, REQUESTED_BUFFER_DURATION_HNS};
+use crate::{
+    engine_wave_format, sleep_respecting_stop, warn_if_buffer_size_mismatched, RECONNECT_BACKOFF,
+    REQUESTED_BUFFER_DURATION_HNS,
+};
 
 // NOTE: `wasapi::Device` wraps a raw COM pointer (`IMMDevice`) and is not
 // `Send` - confirmed by `cargo check` (E0277 on the very first draft of this
@@ -77,8 +80,21 @@ impl MicCapture {
             .name("audio-io-mic-capture".into())
             .spawn(move || {
                 let mut producer = producer;
-                if let Err(e) = capture_loop(&device_id, &mut producer, &thread_stop) {
-                    crate::report_error(&format!("[audio-io] mic capture thread exited with error: {e:#}"));
+                // See render.rs's identical reconnect loop: a WASAPI failure
+                // here (device disabled/removed, sleep/wake) used to
+                // permanently kill mic capture until the app was restarted.
+                // Retry with a backoff instead.
+                while !thread_stop.load(Ordering::Relaxed) {
+                    if let Err(e) = capture_loop(&device_id, &mut producer, &thread_stop) {
+                        crate::report_error(&format!(
+                            "[audio-io] mic capture thread error, retrying in {}s: {e:#}",
+                            RECONNECT_BACKOFF.as_secs()
+                        ));
+                    }
+                    if thread_stop.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    sleep_respecting_stop(RECONNECT_BACKOFF, &thread_stop);
                 }
             })
             .context("spawning mic capture thread")?;

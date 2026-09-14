@@ -19,7 +19,10 @@ use wasapi::{initialize_mta, DeviceEnumerator, Direction, StreamMode};
 
 use crate::bytes::push_f32_le;
 use crate::devices::{find_render_device_by_name, open_render_device_by_id};
-use crate::{engine_wave_format, warn_if_buffer_size_mismatched, REQUESTED_BUFFER_DURATION_HNS};
+use crate::{
+    engine_wave_format, sleep_respecting_stop, warn_if_buffer_size_mismatched, RECONNECT_BACKOFF,
+    REQUESTED_BUFFER_DURATION_HNS,
+};
 
 // NOTE: same as capture.rs - `wasapi::Device` is not `Send` (raw COM
 // pointer), so only the device id `String` crosses into the render thread;
@@ -68,8 +71,30 @@ impl HardwareRender {
             .name("audio-io-hw-render".into())
             .spawn(move || {
                 let mut consumer = consumer;
-                if let Err(e) = render_loop(&device_id, &mut consumer, &thread_stop) {
-                    crate::report_error(&format!("[audio-io] hardware render thread exited with error: {e:#}"));
+                // Real hardware finding: a WASAPI failure here (device
+                // disabled/removed, sleep/wake, another app grabbing
+                // exclusive mode) is very often transient, but this loop
+                // used to just exit on the first `render_loop` error -
+                // permanently killing playback until the whole app was
+                // restarted, while the pipeline thread on the other end of
+                // `consumer` kept running and spun forever logging "output
+                // ring buffer full" once nothing was left to drain it. Retry
+                // with a backoff instead, so the device is transparently
+                // reopened once it comes back (or once shared/exclusive
+                // contention clears), matching the "always warm, self
+                // healing" behavior the rest of this crate already has for
+                // toggles.
+                while !thread_stop.load(Ordering::Relaxed) {
+                    if let Err(e) = render_loop(&device_id, &mut consumer, &thread_stop) {
+                        crate::report_error(&format!(
+                            "[audio-io] hardware render thread error, retrying in {}s: {e:#}",
+                            RECONNECT_BACKOFF.as_secs()
+                        ));
+                    }
+                    if thread_stop.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    sleep_respecting_stop(RECONNECT_BACKOFF, &thread_stop);
                 }
             })
             .context("spawning hardware render thread")?;

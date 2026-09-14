@@ -52,6 +52,30 @@ pub(crate) fn report_error(msg: &str) {
     }
 }
 
+/// How long a worker thread (`capture`/`render`/`loopback`) waits before
+/// retrying after its WASAPI session dies (device removed/disabled, sleep/
+/// wake, exclusive-mode contention) - see each module's reconnect loop.
+/// Long enough not to spam retries against a device that's genuinely gone,
+/// short enough that the app recovers audio within a couple of seconds of
+/// the real device coming back.
+pub(crate) const RECONNECT_BACKOFF: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Sleeps for `duration`, but wakes early (in short slices) to check
+/// `stop_flag` - so a worker thread's reconnect backoff never delays
+/// shutdown by more than a fraction of a second.
+pub(crate) fn sleep_respecting_stop(duration: std::time::Duration, stop_flag: &std::sync::Arc<std::sync::atomic::AtomicBool>) {
+    let slice = std::time::Duration::from_millis(100);
+    let mut remaining = duration;
+    while remaining > std::time::Duration::ZERO {
+        if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+        let step = remaining.min(slice);
+        std::thread::sleep(step);
+        remaining -= step;
+    }
+}
+
 /// Initializes COM (STA, not MTA) on the *calling* thread. Every
 /// `capture.rs`/`render.rs`/`loopback.rs` worker thread already calls
 /// `wasapi::initialize_mta()` internally before touching WASAPI — that part
