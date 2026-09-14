@@ -46,8 +46,18 @@ jobs:
       # preinstalled on the runner image - NSIS presence/version on GitHub's
       # windows-latest image has changed across image releases, so this
       # step must never silently depend on that.
+      #
+      # choco updates the machine PATH registry value, but that doesn't
+      # retroactively apply to $env:PATH in steps that already started this
+      # job - each `run:` step is a fresh shell that only inherits PATH as
+      # GitHub Actions computed it at job start, plus whatever's been
+      # appended to $GITHUB_PATH. So explicitly append NSIS's install dir
+      # (real, observed CI failure: `makensis` -> "not recognized" right
+      # after `choco install nsis` reported success, in the very next step).
       - name: Install NSIS
-        run: choco install nsis -y --no-progress
+        run: |
+          choco install nsis -y --no-progress
+          "C:\Program Files (x86)\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Build ClearNAI-Setup.exe installer
         working-directory: app
