@@ -355,8 +355,24 @@ pub fn start(
         Ok(_) => (true, None),
         Err(e) => (false, Some(e.to_string())),
     };
+    // BVC calls into a closed-source DLL (`weya_nc.dll`) this crate does not
+    // control. Real hardware finding: the mic pipeline thread can stop
+    // draining its ring buffer entirely for a minute-plus with no error
+    // from the WASAPI capture thread at all - i.e. something in the
+    // pipeline blocked forever rather than erroring, and BVC's FFI call is
+    // the only link in the chain that isn't our own pure-Rust code. Wrap it
+    // in a `WatchdogStage` so a wedged call gets a bounded timeout (well
+    // above the 10ms realtime deadline, since the DLL is allowed to be slow,
+    // just not infinite) instead of freezing the whole pipeline thread
+    // silently and permanently.
+    const BVC_WATCHDOG_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
     let mic_bvc_stage: Box<dyn Stage> = match mic_bvc_load {
-        Ok(stage) => Box::new(stage),
+        Ok(stage) => Box::new(dsp_core::WatchdogStage::new(
+            "mic BVC",
+            Box::new(stage),
+            BVC_WATCHDOG_TIMEOUT,
+            |msg| crate::log_error!("[clearnairt] {msg}"),
+        )),
         Err(_) => Box::new(NoOpStage("BVC (unavailable)")),
     };
     let speaker_bvc_load = bvc_hush::HushBvcStage::try_load(bvc_assets_dir);
@@ -365,7 +381,12 @@ pub fn start(
         Err(e) => (false, Some(e.to_string())),
     };
     let speaker_bvc_stage: Box<dyn Stage> = match speaker_bvc_load {
-        Ok(stage) => Box::new(stage),
+        Ok(stage) => Box::new(dsp_core::WatchdogStage::new(
+            "speaker BVC",
+            Box::new(stage),
+            BVC_WATCHDOG_TIMEOUT,
+            |msg| crate::log_error!("[clearnairt] {msg}"),
+        )),
         Err(e) => {
             warnings.push(format!(
                 "Speaker-path BVC unavailable ({e}); the outbound BVC toggle will have no effect."

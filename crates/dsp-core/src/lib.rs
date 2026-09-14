@@ -12,11 +12,13 @@ pub use rtrb::{Consumer, Producer, RingBuffer};
 
 mod clock;
 mod metrics;
+mod watchdog;
 
 pub use clock::{FrameConfig, FrameDeadline, DEFAULT_FRAME_CONFIG};
 pub use metrics::{
     classify_status, compute_percentiles, FrameCounters, LatencyLog, Percentiles, RealtimeStatus,
 };
+pub use watchdog::WatchdogStage;
 
 /// A lock-free on/off switch for one pipeline stage. The GUI thread flips
 /// it; the realtime audio callback reads it every frame with `Relaxed`
