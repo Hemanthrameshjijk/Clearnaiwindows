@@ -379,7 +379,15 @@ pub fn start(
         )),
         Err(_) => Box::new(NoOpStage("BVC (unavailable)")),
     };
-    let speaker_bvc_load = bvc_hush::HushBvcStage::try_load(bvc_assets_dir);
+    // Loaded from its own separate copy of the DLL, not `try_load`'s
+    // `weya_nc.dll` - see `HushBvcStage::try_load_named`'s docs: two
+    // sessions loaded from the *same* on-disk file share one Windows module
+    // instance (refcounted, not duplicated), so any process-global state
+    // this closed-source DLL might have (unconfirmed, but not ruled out
+    // either) would otherwise be silently shared between the mic and
+    // speaker paths despite each holding its own session.
+    let speaker_bvc_load =
+        bvc_hush::HushBvcStage::try_load_named(bvc_assets_dir, bvc_hush::SPEAKER_DLL_FILE_NAME);
     let (speaker_bvc_available, speaker_bvc_unavailable_reason) = match &speaker_bvc_load {
         Ok(_) => (true, None),
         Err(e) => (false, Some(e.to_string())),

@@ -219,6 +219,14 @@ pub fn dll_path(app_data_dir: &Path) -> PathBuf {
     app_data_dir.join(bvc_hush::DLL_FILE_NAME)
 }
 
+/// Where the speaker path's own separate copy of the same DLL bytes lives
+/// once extracted. See `bvc_hush::HushBvcStage::try_load_named`'s docs for
+/// why this needs to be a distinct on-disk file rather than reusing
+/// `dll_path`.
+pub fn speaker_dll_path(app_data_dir: &Path) -> PathBuf {
+    app_data_dir.join(bvc_hush::SPEAKER_DLL_FILE_NAME)
+}
+
 /// True only if the real bundle file exists, is non-empty, and its size
 /// matches the embedded bytes - i.e. `ensure_bvc_assets_extracted` has
 /// already run successfully against this directory. A zero-byte, partial,
@@ -255,6 +263,9 @@ pub enum AssetState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExtractionOutcome {
     pub dll: AssetState,
+    /// The speaker path's separate copy of the same DLL bytes - see
+    /// `speaker_dll_path`.
+    pub speaker_dll: AssetState,
     pub model: AssetState,
 }
 
@@ -264,7 +275,9 @@ impl ExtractionOutcome {
     /// silently proceeding straight past the setup screen.
     #[allow(dead_code)]
     pub fn wrote_anything(&self) -> bool {
-        self.dll == AssetState::Extracted || self.model == AssetState::Extracted
+        self.dll == AssetState::Extracted
+            || self.speaker_dll == AssetState::Extracted
+            || self.model == AssetState::Extracted
     }
 }
 
@@ -337,9 +350,14 @@ fn extract_one_if_needed(path: &Path, bytes: &[u8]) -> anyhow::Result<AssetState
 pub fn ensure_bvc_assets_extracted(target_dir: &Path) -> anyhow::Result<ExtractionOutcome> {
     let dll = extract_one_if_needed(&dll_path(target_dir), EMBEDDED_DLL_BYTES)
         .map_err(|e| anyhow::anyhow!("failed to extract {}: {e:#}", bvc_hush::DLL_FILE_NAME))?;
+    // Same bytes, a second on-disk copy under a different filename - see
+    // `speaker_dll_path`'s docs for why the speaker path loads its own
+    // separate file instead of the mic path's `weya_nc.dll`.
+    let speaker_dll = extract_one_if_needed(&speaker_dll_path(target_dir), EMBEDDED_DLL_BYTES)
+        .map_err(|e| anyhow::anyhow!("failed to extract {}: {e:#}", bvc_hush::SPEAKER_DLL_FILE_NAME))?;
     let model = extract_one_if_needed(&model_bundle_path(target_dir), EMBEDDED_MODEL_BYTES)
         .map_err(|e| anyhow::anyhow!("failed to extract {}: {e:#}", bvc_hush::MODEL_BUNDLE_FILE_NAME))?;
-    Ok(ExtractionOutcome { dll, model })
+    Ok(ExtractionOutcome { dll, speaker_dll, model })
 }
 
 #[cfg(test)]
@@ -408,11 +426,14 @@ mod tests {
 
         let outcome = ensure_bvc_assets_extracted(&dir).expect("extraction into a fresh temp dir must succeed");
         assert_eq!(outcome.dll, AssetState::Extracted);
+        assert_eq!(outcome.speaker_dll, AssetState::Extracted);
         assert_eq!(outcome.model, AssetState::Extracted);
         assert!(outcome.wrote_anything());
 
         let dll_meta = std::fs::metadata(dll_path(&dir)).unwrap();
         assert_eq!(dll_meta.len(), EMBEDDED_DLL_BYTES.len() as u64);
+        let speaker_dll_meta = std::fs::metadata(speaker_dll_path(&dir)).unwrap();
+        assert_eq!(speaker_dll_meta.len(), EMBEDDED_DLL_BYTES.len() as u64);
         let model_meta = std::fs::metadata(model_bundle_path(&dir)).unwrap();
         assert_eq!(model_meta.len(), EMBEDDED_MODEL_BYTES.len() as u64);
 
@@ -429,10 +450,12 @@ mod tests {
 
         let first = ensure_bvc_assets_extracted(&dir).expect("first extraction must succeed");
         assert_eq!(first.dll, AssetState::Extracted);
+        assert_eq!(first.speaker_dll, AssetState::Extracted);
         assert_eq!(first.model, AssetState::Extracted);
 
         let second = ensure_bvc_assets_extracted(&dir).expect("second extraction must succeed");
         assert_eq!(second.dll, AssetState::AlreadyPresent, "a correctly-sized file must not be rewritten");
+        assert_eq!(second.speaker_dll, AssetState::AlreadyPresent, "a correctly-sized file must not be rewritten");
         assert_eq!(second.model, AssetState::AlreadyPresent, "a correctly-sized file must not be rewritten");
         assert!(!second.wrote_anything());
 

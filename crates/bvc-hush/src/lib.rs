@@ -104,6 +104,13 @@ use std::path::{Path, PathBuf};
 /// practice, the running executable's own directory).
 pub const DLL_FILE_NAME: &str = "weya_nc.dll";
 
+/// Filename of the speaker-path's own copy of the exact same DLL bytes,
+/// extracted separately (see `try_load_named`'s docs and
+/// `setup::ensure_bvc_assets_extracted`) so the OS loader maps it as a
+/// distinct module instance from the mic path's `weya_nc.dll`, rather than
+/// the same already-loaded image via a bumped refcount.
+pub const SPEAKER_DLL_FILE_NAME: &str = "weya_nc_speaker.dll";
+
 /// Filename of the ONNX model bundle, as shipped by upstream in
 /// `deployment/models/advanced_dfnet16k_model_best_onnx.tar.gz`. If found
 /// next to the DLL, it is loaded explicitly via
@@ -215,8 +222,35 @@ impl HushBvcStage {
     /// `dsp_core::SAMPLE_RATE_HZ`. Returns a descriptive error instead of
     /// panicking if anything is missing, so callers can detect "BVC
     /// unavailable on this machine" and reflect that in the UI.
+    ///
+    /// Equivalent to `try_load_named(dll_dir, DLL_FILE_NAME)` - see that
+    /// function's docs for why a caller running two independent instances
+    /// (this app's mic and speaker paths) may want a different filename.
     pub fn try_load(dll_dir: &Path) -> Result<Self, HushLoadError> {
-        let dll_path = dll_dir.join(DLL_FILE_NAME);
+        Self::try_load_named(dll_dir, DLL_FILE_NAME)
+    }
+
+    /// Same as `try_load`, but loads the DLL from `dll_dir.join(dll_file_name)`
+    /// instead of the fixed `DLL_FILE_NAME`.
+    ///
+    /// Real hardware finding this exists for: this app creates two fully
+    /// independent `HushBvcStage` instances (mic path, speaker path) at
+    /// startup. On Windows, `LoadLibrary`-ing the *same file path* twice
+    /// does not give you two independent copies of the module - it bumps a
+    /// refcount and hands back the same already-mapped image, so any
+    /// process-global (not per-session) state inside this closed-source DLL
+    /// - a shared thread pool, a global model/license cache, anything not
+    /// scoped to the `WeyaSession`/`WeyaModel` handles the documented API
+    /// exposes - would silently be shared between the two "independent"
+    /// paths despite each one holding its own session. Loading from two
+    /// distinct on-disk file paths (see `setup::ensure_bvc_assets_extracted`,
+    /// which extracts a second copy under a different filename) forces the
+    /// OS loader to map two separate module instances, so any such global
+    /// state - if it exists at all, which cannot be confirmed without the
+    /// DLL's source - is at least not accidentally shared just because both
+    /// paths happen to load "the same" DLL by name.
+    pub fn try_load_named(dll_dir: &Path, dll_file_name: &str) -> Result<Self, HushLoadError> {
+        let dll_path = dll_dir.join(dll_file_name);
         if !dll_path.is_file() {
             return Err(HushLoadError::DllNotFound(dll_path));
         }
