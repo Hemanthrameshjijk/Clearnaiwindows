@@ -28,6 +28,7 @@ use dsp_core::{classify_status, compute_percentiles, RealtimeStatus};
 use iced::widget::{button, column, container, pick_list, progress_bar, row, scrollable, text, toggler};
 use iced::{Color, Element, Length, Subscription};
 use std::cell::RefCell;
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Frame deadline in nanoseconds (10ms @ 48kHz), matching `dsp_core`'s frame
@@ -118,6 +119,23 @@ fn persist(settings: &Settings) {
     if let Err(e) = crate::settings::save(settings) {
         crate::log_error!("[clearnairt] failed to persist settings: {e:#}");
     }
+}
+
+/// Runs a `LiveDeviceSwitcher` call on a background thread rather than
+/// inline in `update_main` (iced's UI thread). `LiveAudioSwitcher::set_*`
+/// opens a fresh WASAPI device and then blocks joining the *old* worker
+/// thread - real hardware log showed that join can take anywhere from the
+/// event-wait timeout up to (with `audio-io`'s reconnect-on-failure loop)
+/// however long the old thread's in-flight device-open attempt takes to
+/// return, which can be much longer than a UI frame. Calling it inline froze
+/// the whole window ("Not Responding") on every device switch. `switcher` is
+/// `Arc`-shared and `Send + Sync`, so this is safe to run off-thread; any
+/// failure is already logged by `LiveAudioSwitcher` itself.
+fn spawn_device_switch(
+    switcher: Arc<dyn crate::shared::LiveDeviceSwitcher>,
+    call: impl FnOnce(&dyn crate::shared::LiveDeviceSwitcher) + Send + 'static,
+) {
+    std::thread::spawn(move || call(switcher.as_ref()));
 }
 
 /// Top-level dispatch: routes to whichever screen is currently active, and
@@ -256,18 +274,25 @@ fn update_main(state: &mut MainState, message: Message) {
             // render thread on the previous virtual-mic-target device (if
             // any) and starts a fresh one on `device.id`, reconnecting the
             // mic pipeline thread's output to a new ring buffer. See
-            // `engine::LiveAudioSwitcher::set_virtual_mic_target`.
-            state.handles.device_switcher.set_virtual_mic_target(Some(device.id));
+            // `engine::LiveAudioSwitcher::set_virtual_mic_target`. Run off
+            // the UI thread - see `spawn_device_switch`.
+            spawn_device_switch(state.handles.device_switcher.clone(), move |s| {
+                s.set_virtual_mic_target(Some(device.id))
+            });
         }
         Message::SelectSpeakerSource(device) => {
             state.settings.virtual_speaker_source_id = Some(device.id.clone());
             persist(&state.settings);
-            state.handles.device_switcher.set_virtual_speaker_source(Some(device.id));
+            spawn_device_switch(state.handles.device_switcher.clone(), move |s| {
+                s.set_virtual_speaker_source(Some(device.id))
+            });
         }
         Message::SelectPhysicalMic(device) => {
             state.settings.physical_mic_device_id = Some(device.id.clone());
             persist(&state.settings);
-            state.handles.device_switcher.set_physical_mic(Some(device.id));
+            spawn_device_switch(state.handles.device_switcher.clone(), move |s| {
+                s.set_physical_mic(Some(device.id))
+            });
         }
         Message::ToggleMonitor(on) => {
             state.handles.monitor.set(on);
@@ -277,7 +302,9 @@ fn update_main(state: &mut MainState, message: Message) {
         Message::SelectMonitorDevice(device) => {
             state.settings.monitor_device_id = Some(device.id.clone());
             persist(&state.settings);
-            state.handles.device_switcher.set_monitor_device(Some(device.id));
+            spawn_device_switch(state.handles.device_switcher.clone(), move |s| {
+                s.set_monitor_device(Some(device.id))
+            });
         }
         // Setup-screen-only messages; unreachable once `Screen::Main` is
         // active (its `view` never emits them), same reasoning as the
