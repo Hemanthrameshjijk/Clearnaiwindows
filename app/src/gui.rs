@@ -28,6 +28,7 @@ use dsp_core::{classify_status, compute_percentiles, RealtimeStatus};
 use iced::widget::{button, column, container, pick_list, progress_bar, row, scrollable, text, toggler};
 use iced::{Color, Element, Length, Subscription};
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -72,6 +73,22 @@ struct MainState {
     status: RealtimeStatus,
     level: f32,
     _keepalive: Option<Box<dyn std::any::Any + Send>>,
+    device_switch_seqs: Arc<DeviceSwitchSequences>,
+}
+
+/// One monotonic counter per device-picker role, used to make rapid/
+/// double-clicked picks resolve to "whichever one the user picked *last*"
+/// instead of "whichever background switch happened to finish last" (see
+/// `spawn_device_switch`). `LiveAudioSwitcher::set_*` opens a device and
+/// blocks joining the old worker thread, both of unpredictable duration, so
+/// two in-flight switches for the same role can otherwise complete in
+/// either order.
+#[derive(Default)]
+struct DeviceSwitchSequences {
+    mic_target: Arc<AtomicU64>,
+    speaker_source: Arc<AtomicU64>,
+    physical_mic: Arc<AtomicU64>,
+    monitor: Arc<AtomicU64>,
 }
 
 struct SetupState {
@@ -135,11 +152,36 @@ fn persist(settings: &Settings) {
 /// the whole window ("Not Responding") on every device switch. `switcher` is
 /// `Arc`-shared and `Send + Sync`, so this is safe to run off-thread; any
 /// failure is already logged by `LiveAudioSwitcher` itself.
+///
+/// `seq`/`this_seq`: since each call now races an unpredictable device-open
+/// duration on its own thread, two rapid picks for the *same* role (a
+/// double-click, or clicking a different device before the first switch
+/// finished) could otherwise land in either order - whichever background
+/// thread happens to finish last silently wins, even if it was the user's
+/// *first* (now-stale) choice. `this_seq` is this call's position in
+/// dispatch order; if `seq` has moved past it by the time this runs, a
+/// newer request for the same role has already been queued (and will apply
+/// its own choice right after), so this stale one is skipped rather than
+/// briefly - or permanently - overriding it.
 fn spawn_device_switch(
     switcher: Arc<dyn crate::shared::LiveDeviceSwitcher>,
+    seq: Arc<AtomicU64>,
+    this_seq: u64,
     call: impl FnOnce(&dyn crate::shared::LiveDeviceSwitcher) + Send + 'static,
 ) {
-    std::thread::spawn(move || call(switcher.as_ref()));
+    std::thread::spawn(move || {
+        if seq.load(Ordering::SeqCst) != this_seq {
+            return;
+        }
+        call(switcher.as_ref())
+    });
+}
+
+/// Bumps `seq` and returns the new value, for `spawn_device_switch`'s
+/// `this_seq` argument. Must be called synchronously on the UI thread right
+/// before dispatching, so dispatch order and sequence-number order match.
+fn next_seq(seq: &AtomicU64) -> u64 {
+    seq.fetch_add(1, Ordering::SeqCst) + 1
 }
 
 /// Top-level dispatch: routes to whichever screen is currently active, and
@@ -184,6 +226,7 @@ fn update_setup(setup: &mut SetupState, message: Message) -> Option<MainState> {
                 status: RealtimeStatus::Bypass,
                 level: 0.0,
                 _keepalive: setup.keepalive.take(),
+                device_switch_seqs: Arc::new(DeviceSwitchSequences::default()),
             })
         }
         // Every other message is a Main-screen-only toggle/picker action;
@@ -280,21 +323,27 @@ fn update_main(state: &mut MainState, message: Message) {
             // mic pipeline thread's output to a new ring buffer. See
             // `engine::LiveAudioSwitcher::set_virtual_mic_target`. Run off
             // the UI thread - see `spawn_device_switch`.
-            spawn_device_switch(state.handles.device_switcher.clone(), move |s| {
+            let seq = state.device_switch_seqs.mic_target.clone();
+            let this_seq = next_seq(&seq);
+            spawn_device_switch(state.handles.device_switcher.clone(), seq, this_seq, move |s| {
                 s.set_virtual_mic_target(Some(device.id))
             });
         }
         Message::SelectSpeakerSource(device) => {
             state.settings.virtual_speaker_source_id = Some(device.id.clone());
             persist(&state.settings);
-            spawn_device_switch(state.handles.device_switcher.clone(), move |s| {
+            let seq = state.device_switch_seqs.speaker_source.clone();
+            let this_seq = next_seq(&seq);
+            spawn_device_switch(state.handles.device_switcher.clone(), seq, this_seq, move |s| {
                 s.set_virtual_speaker_source(Some(device.id))
             });
         }
         Message::SelectPhysicalMic(device) => {
             state.settings.physical_mic_device_id = Some(device.id.clone());
             persist(&state.settings);
-            spawn_device_switch(state.handles.device_switcher.clone(), move |s| {
+            let seq = state.device_switch_seqs.physical_mic.clone();
+            let this_seq = next_seq(&seq);
+            spawn_device_switch(state.handles.device_switcher.clone(), seq, this_seq, move |s| {
                 s.set_physical_mic(Some(device.id))
             });
         }
@@ -306,7 +355,9 @@ fn update_main(state: &mut MainState, message: Message) {
         Message::SelectMonitorDevice(device) => {
             state.settings.monitor_device_id = Some(device.id.clone());
             persist(&state.settings);
-            spawn_device_switch(state.handles.device_switcher.clone(), move |s| {
+            let seq = state.device_switch_seqs.monitor.clone();
+            let this_seq = next_seq(&seq);
+            spawn_device_switch(state.handles.device_switcher.clone(), seq, this_seq, move |s| {
                 s.set_monitor_device(Some(device.id))
             });
         }
@@ -626,6 +677,7 @@ pub fn run(initial: Initial) -> iced::Result {
                     status: RealtimeStatus::Bypass,
                     level: 0.0,
                     _keepalive: initial.keepalive,
+                    device_switch_seqs: Arc::new(DeviceSwitchSequences::default()),
                 })
             }
         },

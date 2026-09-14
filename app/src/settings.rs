@@ -139,13 +139,34 @@ pub fn settings_path() -> Option<PathBuf> {
 /// file doesn't exist, can't be read, or contains invalid JSON. Never
 /// panics or propagates an error - a missing/corrupt settings file is not
 /// fatal to starting the app.
+///
+/// A first launch (file doesn't exist yet) is silent - that's the expected,
+/// ordinary case, not a problem. A file that exists but fails to parse is
+/// logged: from the user's point of view this looks exactly like "all my
+/// settings got reset for no reason", and without a log line there would be
+/// no way to tell that apart from, say, a UI bug that never persisted the
+/// setting in the first place.
 pub fn load() -> Settings {
     let Some(path) = settings_path() else {
         return Settings::default();
     };
     match std::fs::read_to_string(&path) {
-        Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
-        Err(_) => Settings::default(),
+        Ok(text) => serde_json::from_str(&text).unwrap_or_else(|e| {
+            crate::log_error!(
+                "[clearnairt] settings file at {} is corrupt/unreadable ({e}); \
+                 falling back to defaults (your previous selections were not preserved)",
+                path.display()
+            );
+            Settings::default()
+        }),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Settings::default(),
+        Err(e) => {
+            crate::log_error!(
+                "[clearnairt] failed to read settings file at {} ({e}); falling back to defaults",
+                path.display()
+            );
+            Settings::default()
+        }
     }
 }
 

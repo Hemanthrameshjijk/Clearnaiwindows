@@ -14,13 +14,23 @@
 //! output.
 
 use std::fs::{File, OpenOptions};
-use std::io::Write;
+use std::io::{Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 static LOG_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
+
+/// A long-running session logging a variety of *distinct* messages over
+/// days/weeks (not just one repeated one - that case is already collapsed
+/// by the de-duplication below) would otherwise grow `clearnai.log`
+/// unbounded forever, same failure shape as the runaway-I/O bug described
+/// below just on a much longer timescale. Past this size the file is
+/// truncated back to empty (keeping the single open handle - no reopen,
+/// same reasoning as the rest of this module) before the next line is
+/// written, so it never grows past roughly this bound.
+const MAX_LOG_BYTES: u64 = 20 * 1024 * 1024;
 
 /// Real-hardware finding: some of this app's realtime audio threads (mic
 /// capture, hardware render) call `log_error!` on *every* dropped/underrun
@@ -115,6 +125,16 @@ pub fn write_line(level: &str, msg: &str) {
     guard.last_msg = msg.to_string();
     guard.last_flush = Instant::now();
     if let Some(f) = guard.file.as_mut() {
+        if f.metadata().map(|m| m.len()).unwrap_or(0) >= MAX_LOG_BYTES {
+            if f.set_len(0).is_ok() {
+                let _ = f.seek(SeekFrom::Start(0));
+                let _ = writeln!(
+                    f,
+                    "[{}] [{level}] (log file exceeded {MAX_LOG_BYTES} bytes; truncated)",
+                    timestamp()
+                );
+            }
+        }
         let _ = writeln!(f, "[{}] [{level}] {msg}", timestamp());
     }
 }

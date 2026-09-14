@@ -554,7 +554,7 @@ pub fn start(
         mic_noise_stage,
         mic_bvc_stage,
         mic_studio_stage,
-    );
+    )?;
 
     // --- Pipeline 2 (speaker outbound): capture from user-selected virtual
     // speaker source -> Noise -> BVC -> Studio (3 independent toggles,
@@ -605,7 +605,7 @@ pub fn start(
         speaker_noise_stage,
         speaker_bvc_stage,
         speaker_studio_stage,
-    );
+    )?;
 
     handles.device_switcher = Arc::new(LiveAudioSwitcher {
         physical_mic: Mutex::new(Some(mic_capture)),
@@ -703,6 +703,15 @@ fn push_frame_to_fixed(producer: &mut Producer<f32>, frame: &[f32]) {
 
 /// Pipeline 1: mic capture -> AEC -> Noise -> BVC -> Studio -> virtual mic
 /// render. Runs on its own thread for the life of the process.
+///
+/// Returns `Err` if the OS itself refuses to create the thread (e.g. thread-
+/// handle exhaustion after many rapid device switches). This is the one
+/// thread-spawn in the whole engine that used to `.expect()` on that
+/// outcome - with `panic = "abort"` set in the release profile, a bare
+/// `.expect()` here would take the *entire process* down instantly and
+/// silently, unlike every other spawn in this codebase (WASAPI worker
+/// threads, `WatchdogStage`'s worker), which already surface a `Result`
+/// instead.
 #[allow(clippy::too_many_arguments)]
 fn spawn_mic_pipeline(
     mic_in: SwapConsumer,
@@ -714,7 +723,7 @@ fn spawn_mic_pipeline(
     mut noise_stage: Box<dyn Stage>,
     mut bvc_stage: Box<dyn Stage>,
     mut studio_stage: Box<dyn Stage>,
-) {
+) -> Result<()> {
     thread::Builder::new()
         .name("clearnai-mic-pipeline".into())
         .spawn(move || {
@@ -805,12 +814,16 @@ fn spawn_mic_pipeline(
                 }
             }
         })
-        .expect("spawning mic pipeline thread");
+        .context("spawning mic pipeline thread")?;
+    Ok(())
 }
 
 /// Pipeline 2: virtual-speaker-source capture -> Noise -> BVC -> Studio
 /// (each independently toggleable, mirroring the mic pipeline exactly) ->
 /// hardware speaker render.
+///
+/// See `spawn_mic_pipeline`'s doc comment for why this returns `Result`
+/// instead of `.expect()`-ing the thread spawn.
 fn spawn_speaker_pipeline(
     spk_in: SwapConsumer,
     mut spk_out: Producer<f32>,
@@ -818,7 +831,7 @@ fn spawn_speaker_pipeline(
     mut noise_stage: Box<dyn Stage>,
     mut bvc_stage: Box<dyn Stage>,
     mut studio_stage: Box<dyn Stage>,
-) {
+) -> Result<()> {
     thread::Builder::new()
         .name("clearnai-speaker-pipeline".into())
         .spawn(move || {
@@ -848,5 +861,6 @@ fn spawn_speaker_pipeline(
                 push_frame_to_fixed(&mut spk_out, &frame);
             }
         })
-        .expect("spawning speaker pipeline thread");
+        .context("spawning speaker pipeline thread")?;
+    Ok(())
 }
