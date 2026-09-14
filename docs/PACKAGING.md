@@ -42,6 +42,12 @@ manually placing a `.dll` or a model archive next to it:
 $dist = "dist\ClearNAI"
 New-Item -ItemType Directory -Force -Path $dist
 Copy-Item target\x86_64-pc-windows-msvc\release\clearnairt.exe $dist\
+Copy-Item app\uninstall.ps1 $dist\
+
+# uninstall.ps1 removes %LOCALAPPDATA%\ClearNAI (settings.json, clearnai.log,
+# and the self-extracted weya_nc.dll/model bundle) and optionally deletes
+# clearnairt.exe itself. It does NOT touch any VB-Cable/VoiceMeeter driver
+# install - see the script's own header comment for why.
 
 # That's it for BVC — weya_nc.dll and the model bundle are embedded inside
 # clearnairt.exe itself and self-extract into %LOCALAPPDATA%\ClearNAI on

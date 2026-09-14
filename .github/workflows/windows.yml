@@ -42,9 +42,11 @@ jobs:
       - name: Build release binary (matches the real packaging target)
         run: cargo build --release --workspace --locked
 
-      - name: Upload clearnairt.exe
+      - name: Upload clearnairt.exe + uninstall.ps1
         uses: actions/upload-artifact@v4
         with:
           name: clearnairt-windows-x64
-          path: target/release/clearnairt.exe
+          path: |
+            target/release/clearnairt.exe
+            app/uninstall.ps1
           if-no-files-found: error
