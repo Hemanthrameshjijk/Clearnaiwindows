@@ -12,10 +12,20 @@ name: Windows build and test
 # need real hardware (dsp-core, studio-dsp, noise-engine, aec, settings,
 # setup) passes on genuine Windows.
 #
-# What this CANNOT verify (needs a real machine - see docs/VIRTUAL_DEVICES.md
-# and STATUS.md): real WASAPI devices/mic/speakers, a real weya_nc.dll +
-# model bundle on disk, a real VB-Cable install, or the GUI actually
-# rendering/responding to input.
+# The "Run --diagnose smoke test" step below goes one step further than a
+# clean build: it actually *executes* the real MSVC-built clearnairt.exe on
+# genuine Windows and fails the job if it crashes, hangs, or exits non-zero -
+# real run evidence (exe starts, self-extracts the embedded BVC DLLs/model
+# into %LOCALAPPDATA%, enumerates whatever audio devices the runner has),
+# not just "it links".
+#
+# What this STILL cannot verify (needs a real machine with a human at it -
+# see docs/VIRTUAL_DEVICES.md, docs/WINDOWS_RUNTIME_REQUIREMENTS.md, and
+# STATUS.md): a real physical microphone (GitHub's Windows runners are
+# headless VMs with no audio hardware), a real VB-Cable install, the GUI
+# actually rendering/responding to input, or Zoom/Meet/Teams recognizing the
+# virtual mic. Those are why this workflow's PASS is real-but-partial
+# evidence, not a claim that the full physical-mic-to-Zoom path works.
 on:
   push:
     branches: [main]
@@ -41,6 +51,50 @@ jobs:
 
       - name: Build release binary (matches the real packaging target)
         run: cargo build --release --workspace --locked
+
+      # Actually runs the real MSVC-built exe on genuine Windows - the first
+      # time this project has done that (see STATUS.md). `--diagnose` never
+      # starts the GUI or the permanent audio-engine threads (see
+      # app/src/diagnose.rs), so this is a fast, deterministic, side-effect-
+      # free smoke test: does the exe start at all, self-extract the
+      # embedded BVC DLLs/model into %LOCALAPPDATA%, and exit cleanly -
+      # rather than crash, hang, or exit non-zero. Output redirected to
+      # files (not a console) via .NET's Process class, which works
+      # regardless of this being a `windows_subsystem = "windows"` binary
+      # with no console of its own.
+      - name: Run --diagnose smoke test
+        shell: pwsh
+        run: |
+          $exe = "target\release\clearnairt.exe"
+          $proc = Start-Process -FilePath $exe -ArgumentList '--diagnose' -NoNewWindow -PassThru `
+            -RedirectStandardOutput diagnose_stdout.txt -RedirectStandardError diagnose_stderr.txt
+          $finished = $proc.WaitForExit(30000)
+          if (-not $finished) {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            Write-Error "clearnairt.exe --diagnose did not exit within 30s (hung)"
+            exit 1
+          }
+          Write-Host "---- --diagnose stdout ----"
+          Get-Content diagnose_stdout.txt
+          Write-Host "---- --diagnose stderr ----"
+          Get-Content diagnose_stderr.txt
+          if ($proc.ExitCode -ne 0) {
+            Write-Error "clearnairt.exe --diagnose exited with code $($proc.ExitCode)"
+            exit 1
+          }
+
+      # Uploaded even on failure (`if: always()`) so a hang/crash still
+      # leaves the partial output inspectable from the Actions UI, not just
+      # the job's own console log.
+      - name: Upload --diagnose output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnose-output
+          path: |
+            diagnose_stdout.txt
+            diagnose_stderr.txt
+          if-no-files-found: warn
 
       # Pinned explicitly rather than relying on whatever happens to be
       # preinstalled on the runner image - NSIS presence/version on GitHub's
