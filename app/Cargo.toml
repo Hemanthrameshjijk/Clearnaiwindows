@@ -52,5 +52,5 @@ iced = { version = "0.14", features = ["tokio"] }
 # `wasapi::initialize_mta()` COM-init probe, matching the exact `windows`/
 # `wasapi` versions already pulled in transitively by `audio-io` (see
 # `crates/audio-io/Cargo.toml`) to avoid duplicate incompatible versions.
-windows = { version = "0.62", features = ["Wdk_System_SystemServices", "Wdk_Foundation", "Win32_System_SystemInformation"] }
+windows = { version = "0.62", features = ["Wdk_System_SystemServices", "Wdk_Foundation", "Win32_System_SystemInformation", "Win32_System_Console"] }
 wasapi = "0.24"

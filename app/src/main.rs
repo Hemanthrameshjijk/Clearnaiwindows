@@ -22,6 +22,7 @@
 
 #![windows_subsystem = "windows"]
 
+mod diagnose;
 mod gui;
 mod logging;
 mod settings;
@@ -154,6 +155,15 @@ fn main() -> iced::Result {
     // both device enumeration and default mic capture startup.
     #[cfg(windows)]
     audio_io::initialize_com_for_this_thread();
+
+    // `--diagnose`: print a one-shot report and exit, never starting the
+    // GUI or the real audio engine. Checked before `logging::init` on
+    // purpose - a diagnostic run's own output goes to the console it was
+    // launched from (see `diagnose::run`), not the log file.
+    if diagnose::requested() {
+        diagnose::run();
+        return Ok(());
+    }
 
     logging::init(&setup::app_data_dir());
 
